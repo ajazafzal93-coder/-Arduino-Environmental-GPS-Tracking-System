@@ -1,0 +1,31 @@
+Live Serial Monitor Display - Updates every 2 seconds with a formatted dashboard showing:
+
+Temperature, Humidity, Pressure
+GPS Status, Latitude, Longitude, Altitude, Satellite count
+System status (SD Card, GSM, Data counter, Uptime)
+
+
+SD Card Data Logging - Automatically logs data every 10 seconds to FL15.CSV with proper headers
+Better Status Messages - Color-coded status indicators:
+
+[OK] - Successful operations
+[ERROR] - Errors
+[INFO] - Information
+[WAITING] - Waiting for conditions
+[SD] / [SMS] - Operation types
+
+
+
+Pin Configuration (UNCHANGED):
+
+DHT12: Pin 2
+GPS TX: Pin 4 (RX not connected)
+SIM800L: RX→10, TX→11
+SD Card CS: Pin 8
+BMP280: I2C (A4, A5)
+
+Intervals:
+
+Display update: Every 2 seconds
+SD logging: Every 10 seconds
+SMS sending: Every 60 seconds

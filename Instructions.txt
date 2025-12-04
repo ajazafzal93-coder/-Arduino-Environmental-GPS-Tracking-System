@@ -1,0 +1,36 @@
+Common issues and solutions:
+For SD Card ERROR:
+
+Check SD card is inserted properly
+Verify wiring:
+
+CS → Pin 8
+MOSI → Pin 11
+MISO → Pin 12
+SCK → Pin 13
+VCC → 5V
+GND → GND
+
+
+Try a different SD card (some cards don't work well)
+Format SD card as FAT32
+
+For DHT12 reading 0.0:
+
+Verify it's actually DHT12 (not DHT11 or DHT22)
+Check wiring:
+
+VCC → 5V
+GND → GND
+DATA → Pin 2
+
+
+DHT12 uses I2C by default! Try this alternative:
+
+Connect to I2C: SDA → A4, SCL → A5
+Or use 3-wire mode with 10kΩ pull-up resistor between DATA and VCC
+
+
+Wait 2-3 seconds after power-on before first reading
+
+Upload the updated code and tell me what error messages you see during initialization!

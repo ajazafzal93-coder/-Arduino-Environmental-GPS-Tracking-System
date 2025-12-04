@@ -1,0 +1,422 @@
+/*
+ * Arduino GPS Tracker with Environmental Sensors + SD Card Logging
+ * Sensors: DHT12 (Temp/Humidity), BMP280 (Pressure), NEO-6M GPS
+ * Communication: SIM800L GSM Module
+ * Storage: SD Card Module
+ * Features: Live Serial Monitor Display
+ * 
+ * Required Libraries:
+ * - DHT sensor library by Adafruit
+ * - Adafruit BMP280 Library
+ * - TinyGPS++ by Mikal Hart
+ * - SoftwareSerial (built-in)
+ * - SD (built-in)
+ * - SPI (built-in)
+ */
+
+#include <Wire.h>
+#include <DHT.h>
+#include <Adafruit_BMP280.h>
+#include <TinyGPS++.h>
+#include <SoftwareSerial.h>
+#include <SD.h>
+#include <SPI.h>
+
+// Pin Definitions (DO NOT CHANGE)
+#define DHTPIN 2              // DHT12 data pin
+#define DHTTYPE DHT12         // DHT sensor type
+#define GPS_RX 4              // GPS TX to Arduino pin 4
+#define GPS_TX 3              // GPS RX (not connected)
+#define GSM_RX 10             // SIM800L TX to Arduino pin 10
+#define GSM_TX 11             // SIM800L RX to Arduino pin 11
+#define SD_CS 8               // SD Card Chip Select pin
+
+// Configuration
+#define PHONE_NUMBER "+1234567890"  // Replace with destination phone number
+#define SEND_INTERVAL 60000         // Send SMS every 60 seconds
+#define LOG_INTERVAL 10000          // Log to SD every 10 seconds
+#define DISPLAY_INTERVAL 2000       // Display on Serial every 2 seconds
+#define GPS_BAUD 9600
+#define GSM_BAUD 9600
+#define FILENAME "FL15.CSV"         // SD Card filename
+
+// Initialize sensors and modules
+DHT dht(DHTPIN, DHTTYPE);
+Adafruit_BMP280 bmp;
+TinyGPSPlus gps;
+SoftwareSerial gpsSerial(GPS_RX, GPS_TX);
+SoftwareSerial gsmSerial(GSM_RX, GSM_TX);
+
+// Variables
+float temperature = 0;
+float humidity = 0;
+float pressure = 0;
+double latitude = 0;
+double longitude = 0;
+float altitude = 0;
+int satellites = 0;
+unsigned long lastSendTime = 0;
+unsigned long lastLogTime = 0;
+unsigned long lastDisplayTime = 0;
+unsigned long dataCounter = 0;
+bool gpsValid = false;
+bool gsmReady = false;
+bool sdCardReady = false;
+
+void setup() {
+  Serial.begin(9600);
+  delay(1000);
+  
+  printHeader();
+  
+  // Initialize SD Card
+  Serial.println(F("\n[INIT] Initializing SD card..."));
+  if (!SD.begin(SD_CS)) {
+    Serial.println(F("[ERROR] SD card initialization failed!"));
+    sdCardReady = false;
+  } else {
+    Serial.println(F("[OK] SD card ready"));
+    sdCardReady = true;
+    
+    // Create file with header if it doesn't exist
+    if (!SD.exists(FILENAME)) {
+      File dataFile = SD.open(FILENAME, FILE_WRITE);
+      if (dataFile) {
+        dataFile.println(F("Timestamp,Temperature(C),Humidity(%),Pressure(hPa),Altitude(m),Latitude,Longitude"));
+        dataFile.close();
+        Serial.println(F("[OK] Created new log file with header"));
+      } else {
+        Serial.println(F("[ERROR] Could not create file"));
+        sdCardReady = false;
+      }
+    } else {
+      Serial.println(F("[INFO] Log file exists, appending data"));
+    }
+  }
+  
+  // Initialize DHT12
+  dht.begin();
+  Serial.println(F("[OK] DHT12 initialized"));
+  
+  // Initialize BMP280
+  Serial.println(F("[INIT] Initializing BMP280..."));
+  if (!bmp.begin(0x76)) {
+    Serial.println(F("[ERROR] BMP280 not found at 0x76!"));
+    if (!bmp.begin(0x77)) {
+      Serial.println(F("[ERROR] BMP280 not found at 0x77! Check wiring."));
+      while (1);
+    }
+  }
+  
+  // BMP280 settings
+  bmp.setSampling(Adafruit_BMP280::MODE_NORMAL,
+                  Adafruit_BMP280::SAMPLING_X2,
+                  Adafruit_BMP280::SAMPLING_X16,
+                  Adafruit_BMP280::FILTER_X16,
+                  Adafruit_BMP280::STANDBY_MS_500);
+  Serial.println(F("[OK] BMP280 initialized"));
+  
+  // Initialize GPS
+  gpsSerial.begin(GPS_BAUD);
+  Serial.println(F("[OK] GPS module initialized"));
+  Serial.println(F("[INFO] Waiting for GPS fix..."));
+  
+  // Initialize GSM
+  gsmSerial.begin(GSM_BAUD);
+  delay(3000);
+  initGSM();
+  
+  Serial.println(F("\n[READY] System initialized!"));
+  Serial.println(F("========================================\n"));
+  delay(2000);
+}
+
+void loop() {
+  // Read GPS data continuously
+  while (gpsSerial.available() > 0) {
+    if (gps.encode(gpsSerial.read())) {
+      updateGPSData();
+    }
+  }
+  
+  // Display live data on Serial Monitor
+  if (millis() - lastDisplayTime >= DISPLAY_INTERVAL) {
+    readSensors();
+    displayLiveData();
+    lastDisplayTime = millis();
+  }
+  
+  // Log data to SD card
+  if (millis() - lastLogTime >= LOG_INTERVAL) {
+    if (sdCardReady) {
+      logDataToSD();
+    }
+    lastLogTime = millis();
+  }
+  
+  // Send data via SMS
+  if (millis() - lastSendTime >= SEND_INTERVAL) {
+    if (gpsValid && gsmReady) {
+      sendDataViaSMS();
+      lastSendTime = millis();
+    } else {
+      if (!gpsValid) {
+        Serial.println(F("[WAITING] GPS fix required for SMS transmission"));
+      }
+      if (!gsmReady) {
+        Serial.println(F("[WAITING] GSM network connection required"));
+      }
+      lastSendTime = millis() - SEND_INTERVAL + 10000; // Retry in 10 seconds
+    }
+  }
+}
+
+void printHeader() {
+  Serial.println(F("\n"));
+  Serial.println(F("========================================"));
+  Serial.println(F("   GPS ENVIRONMENTAL TRACKER SYSTEM    "));
+  Serial.println(F("========================================"));
+  Serial.println(F("  Sensors: DHT12, BMP280, NEO-6M GPS  "));
+  Serial.println(F("  Module: SIM800L GSM                  "));
+  Serial.println(F("  Storage: SD Card                     "));
+  Serial.println(F("========================================"));
+}
+
+void initGSM() {
+  Serial.println(F("\n[INIT] Initializing SIM800L..."));
+  
+  // Test AT command
+  sendATCommand("AT", 1000);
+  delay(500);
+  
+  // Disable echo
+  sendATCommand("ATE0", 1000);
+  delay(500);
+  
+  // Check signal quality
+  Serial.print(F("[INFO] Signal quality: "));
+  sendATCommand("AT+CSQ", 1000);
+  delay(500);
+  
+  // Check network registration
+  sendATCommand("AT+CREG?", 1000);
+  delay(500);
+  
+  // Set SMS to text mode
+  sendATCommand("AT+CMGF=1", 1000);
+  delay(500);
+  
+  // Set character set
+  sendATCommand("AT+CSCS=\"GSM\"", 1000);
+  delay(500);
+  
+  gsmReady = true;
+  Serial.println(F("[OK] SIM800L ready!\n"));
+}
+
+void sendATCommand(const char* cmd, int timeout) {
+  gsmSerial.println(cmd);
+  long int time = millis();
+  
+  while((millis() - time) < timeout) {
+    while(gsmSerial.available()) {
+      char c = gsmSerial.read();
+      Serial.write(c);
+    }
+  }
+}
+
+void readSensors() {
+  // Read DHT12
+  humidity = dht.readHumidity();
+  temperature = dht.readTemperature();
+  
+  if (isnan(humidity) || isnan(temperature)) {
+    humidity = 0;
+    temperature = 0;
+  }
+  
+  // Read BMP280
+  pressure = bmp.readPressure() / 100.0F; // Convert Pa to hPa
+}
+
+void updateGPSData() {
+  if (gps.location.isValid()) {
+    latitude = gps.location.lat();
+    longitude = gps.location.lng();
+    
+    if (gps.altitude.isValid()) {
+      altitude = gps.altitude.meters();
+    }
+    
+    if (gps.satellites.isValid()) {
+      satellites = gps.satellites.value();
+    }
+    
+    gpsValid = true;
+  } else {
+    gpsValid = false;
+  }
+}
+
+void displayLiveData() {
+  // Clear screen effect (print multiple newlines)
+  Serial.println(F("\n\n"));
+  
+  // Display header
+  Serial.println(F("╔════════════════════════════════════════╗"));
+  Serial.println(F("║       LIVE SENSOR DATA MONITOR         ║"));
+  Serial.println(F("╠════════════════════════════════════════╣"));
+  
+  // Environmental Data
+  Serial.println(F("║  ENVIRONMENTAL SENSORS                 ║"));
+  Serial.println(F("╟────────────────────────────────────────╢"));
+  Serial.print(F("║  Temperature:  "));
+  Serial.print(temperature, 1);
+  Serial.println(F(" °C"));
+  
+  Serial.print(F("║  Humidity:     "));
+  Serial.print(humidity, 1);
+  Serial.println(F(" %"));
+  
+  Serial.print(F("║  Pressure:     "));
+  Serial.print(pressure, 2);
+  Serial.println(F(" hPa"));
+  
+  // GPS Data
+  Serial.println(F("╟────────────────────────────────────────╢"));
+  Serial.println(F("║  GPS LOCATION DATA                     ║"));
+  Serial.println(F("╟────────────────────────────────────────╢"));
+  
+  if (gpsValid) {
+    Serial.print(F("║  Status:       GPS LOCKED ("));
+    Serial.print(satellites);
+    Serial.println(F(" sats)"));
+    
+    Serial.print(F("║  Latitude:     "));
+    Serial.println(latitude, 6);
+    
+    Serial.print(F("║  Longitude:    "));
+    Serial.println(longitude, 6);
+    
+    Serial.print(F("║  Altitude:     "));
+    Serial.print(altitude, 1);
+    Serial.println(F(" m"));
+  } else {
+    Serial.println(F("║  Status:       SEARCHING FOR GPS...    ║"));
+    Serial.print(F("║  Satellites:   "));
+    Serial.println(satellites);
+  }
+  
+  // System Status
+  Serial.println(F("╟────────────────────────────────────────╢"));
+  Serial.println(F("║  SYSTEM STATUS                         ║"));
+  Serial.println(F("╟────────────────────────────────────────╢"));
+  
+  Serial.print(F("║  SD Card:      "));
+  Serial.println(sdCardReady ? F("READY") : F("ERROR"));
+  
+  Serial.print(F("║  GSM Module:   "));
+  Serial.println(gsmReady ? F("CONNECTED") : F("DISCONNECTED"));
+  
+  Serial.print(F("║  Data Logged:  "));
+  Serial.println(dataCounter);
+  
+  Serial.print(F("║  Uptime:       "));
+  unsigned long uptime = millis() / 1000;
+  Serial.print(uptime / 60);
+  Serial.print(F(" min "));
+  Serial.print(uptime % 60);
+  Serial.println(F(" sec"));
+  
+  Serial.println(F("╚════════════════════════════════════════╝"));
+  Serial.println();
+}
+
+void logDataToSD() {
+  if (!sdCardReady) {
+    Serial.println(F("[ERROR] SD card not available"));
+    return;
+  }
+  
+  File dataFile = SD.open(FILENAME, FILE_WRITE);
+  
+  if (dataFile) {
+    // Format: Timestamp,Temperature,Humidity,Pressure,Altitude,Latitude,Longitude
+    unsigned long timestamp = millis() / 1000; // Seconds since startup
+    
+    dataFile.print(timestamp);
+    dataFile.print(F(","));
+    dataFile.print(temperature, 2);
+    dataFile.print(F(","));
+    dataFile.print(humidity, 2);
+    dataFile.print(F(","));
+    dataFile.print(pressure, 2);
+    dataFile.print(F(","));
+    dataFile.print(altitude, 2);
+    dataFile.print(F(","));
+    dataFile.print(latitude, 6);
+    dataFile.print(F(","));
+    dataFile.println(longitude, 6);
+    
+    dataFile.close();
+    dataCounter++;
+    
+    Serial.print(F("[SD] Data logged (Record #"));
+    Serial.print(dataCounter);
+    Serial.println(F(")"));
+  } else {
+    Serial.println(F("[ERROR] Could not open file for writing"));
+    sdCardReady = false; // Mark SD as not ready
+  }
+}
+
+void sendDataViaSMS() {
+  if (!gsmReady) {
+    Serial.println(F("[ERROR] GSM not ready"));
+    return;
+  }
+  
+  Serial.println(F("\n[SMS] Preparing to send data..."));
+  
+  // Prepare SMS message
+  String message = "TEMP:" + String(temperature, 1) +
+                   ",HUM:" + String(humidity, 1) +
+                   ",PRES:" + String(pressure, 2) +
+                   ",LAT:" + String(latitude, 6) +
+                   ",LON:" + String(longitude, 6) +
+                   ",ALT:" + String(altitude, 1);
+  
+  Serial.print(F("[SMS] Message: "));
+  Serial.println(message);
+  
+  // Set SMS recipient
+  gsmSerial.print("AT+CMGS=\"");
+  gsmSerial.print(PHONE_NUMBER);
+  gsmSerial.println("\"");
+  delay(1000);
+  
+  // Send message content
+  gsmSerial.print(message);
+  delay(500);
+  
+  // Send Ctrl+Z to send SMS
+  gsmSerial.write(26);
+  delay(5000);
+  
+  // Check response
+  if (gsmSerial.available()) {
+    String response = "";
+    while (gsmSerial.available()) {
+      response += (char)gsmSerial.read();
+    }
+    
+    if (response.indexOf("OK") != -1) {
+      Serial.println(F("[SMS] Message sent successfully!"));
+    } else {
+      Serial.println(F("[SMS] Failed to send message"));
+      Serial.println(response);
+    }
+  }
+  Serial.println();
+}

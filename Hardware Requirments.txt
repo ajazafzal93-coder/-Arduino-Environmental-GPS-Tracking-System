@@ -1,0 +1,26 @@
+This project requires a set of reliable and compatible hardware components to collect environmental data and GPS coordinates, then store them efficiently on an SD card. The system uses an Arduino Uno as the primary controller for reading the DHT12 temperature/humidity sensor and the BMP280 barometric pressure sensor through the I2C interface. A second board, the Arduino Nano, is dedicated to handling the NEO-6M GPS module, which outputs real-time coordinates via its TX pin. A micro SD card module connected over SPI is used to store all collected data in CSV format, making it easy to analyze later on a computer. Proper wiring materials such as jumper wires, a breadboard, and a stable 5V power source are essential for stable operation. A FAT32-formatted micro SD card (8–32GB recommended) ensures reliable data logging, and a common ground connection between both Arduinos is required for serial communication between them.
+
+– Hardware Requirements
+
+
+Arduino Uno (main environmental data logger)
+
+Arduino Nano (dedicated GPS data reader)
+
+DHT12 temperature & humidity sensor
+
+BMP280 barometric pressure & altitude sensor (I2C: SDA → A4, SCL → A5)
+
+NEO-6M GPS module (TX output → Nano)
+
+Micro SD card module (SPI: CS → D8, MOSI → D11, MISO → D12, SCK → D13)
+
+Micro SD card (8–32GB, FAT32 formatted)
+
+Breadboard and jumper wires for circuit connections
+
+Stable 5V power supply for Uno and sensors
+
+3.3V/5V power source for GPS module (depending on board version)
+
+Shared ground connection between Uno and Nano for communication
